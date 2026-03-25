@@ -1,14 +1,4 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/fc8487b9-fdc6-4386-a316-10328d260eb2
-
-## Run Locally
+## Run Locally (with built in gemini api key for bot)
 
 **Prerequisites:**  Node.js
 
