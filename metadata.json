@@ -1,9 +1,0 @@
-{
-  "name": "ыхыхыххы гимини",
-  "description": "ArbuzGram - Chat with ыхыхыххы гимини and friends",
-  "requestFramePermissions": [
-    "microphone",
-    "camera",
-    "geolocation"
-  ]
-}
