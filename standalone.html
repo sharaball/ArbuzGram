@@ -1,0 +1,461 @@
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ArbuzGram Portable</title>
+    
+    <!-- Reliable CDNs -->
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.10/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    
+    <!-- Base Lucide library (NOT the React version, to avoid forwardRef errors) -->
+    <script src="https://cdn.jsdelivr.net/npm/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+      
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #0f0f0f;
+        color: #fff;
+        margin: 0;
+        overflow: hidden;
+      }
+
+      .custom-scroll::-webkit-scrollbar { width: 6px; }
+      .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+      .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+      .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+      
+      @keyframes water-swirl {
+        0% { background-position: 0% 0%; transform: scale(1); }
+        50% { background-position: 100% 100%; transform: scale(1.05); }
+        100% { background-position: 0% 0%; transform: scale(1); }
+      }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div style="height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f0f0f; color: #4ade80; font-family: sans-serif;">
+            <div style="text-align: center;">
+                <h2 style="font-size: 28px; font-weight: 900; margin-bottom: 10px; letter-spacing: -1px;">ArbuzGram</h2>
+                <p style="opacity: 0.6; font-size: 14px;">Loading liquid interface...</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // --- Bulletproof Icon Component ---
+        // Uses the base lucide library to avoid React-specific UMD bugs
+        const Icon = ({ name, size = 24, className = "" }) => {
+          const iconHtml = useMemo(() => {
+            if (!window.lucide) return '';
+            // Convert CamelCase to kebab-case for base lucide library
+            const lucideName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+            const icon = window.lucide.icons[lucideName] || window.lucide.icons[name.toLowerCase()];
+            
+            if (!icon) return '';
+            
+            return icon.toSvg({
+              width: size,
+              height: size,
+              class: className,
+              'stroke-width': 2
+            });
+          }, [name, size, className]);
+
+          if (!iconHtml) return <div style={{ width: size, height: size }} className="bg-white/10 rounded-full" />;
+
+          return <div dangerouslySetInnerHTML={{ __html: iconHtml }} className="inline-flex items-center justify-center" />;
+        };
+
+        // --- Constants ---
+        const PUBLIC_AVATARS = [
+          "https://api.dicebear.com/7.x/initials/svg?seed=Saved&backgroundColor=4ade80",
+          "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Google_Gemini_logo.svg/1200px-Google_Gemini_logo.svg.png",
+        ];
+        const DEFAULT_AVATAR_URL = "https://cdn-icons-png.flaticon.com/512/2909/2909808.png";
+
+        const TRANSLATIONS = {
+          en: {
+            search: "Search", settings: "Settings", personalNickname: "Your @nickname", partnerNickname: "Partner's @nickname",
+            connect: "Connect", disconnect: "Disconnect", savedMessages: "Saved Messages", aiBot: "ыхыхыххы гимини",
+            typing: "typing...", online: "online", offline: "offline", voiceMsg: "Voice message", placeholder: "Message",
+            theme: "Appearance", theme_standard: "Standard", theme_minimal: "Dark Mode", theme_frutiger: "Liquid Arbuz",
+            yourName: "Your Display Name", chooseAvatar: "Change Photo"
+          },
+          ru: {
+            search: "Поиск", settings: "Настройки", personalNickname: "Ваш @nickname", partnerNickname: "Partner's @nickname",
+            connect: "Подключить", disconnect: "Отключить", savedMessages: "Избранное", aiBot: "ыхыхыххы гимини",
+            typing: "печатает...", online: "в сети", offline: "не в сети", voiceMsg: "Голосовое сообщение", placeholder: "Сообщение",
+            theme: "Оформление", theme_standard: "Стандарт", theme_minimal: "Темная тема", theme_frutiger: "Liquid Arbuz",
+            yourName: "Ваше имя", chooseAvatar: "Изменить фото"
+          }
+        };
+
+        const INITIAL_CHATS = (lang) => [
+          { id: 'saved', name: TRANSLATIONS[lang].savedMessages, isBot: false, isP2P: false, messages: [], avatar: PUBLIC_AVATARS[0] },
+          { id: 'gemini', name: TRANSLATIONS[lang].aiBot, isBot: true, isP2P: false, messages: [], avatar: PUBLIC_AVATARS[1] }
+        ];
+
+        // --- Gemini Fetch ---
+        const getGeminiResponse = async (userMessage, lang, imageData, userApiKey, userAvatarData) => {
+          try {
+            if (!userApiKey) return lang === 'ru' ? "API ключ не настроен." : "API key is not configured.";
+            const parts = [];
+            let systemPrompt = lang === 'ru' 
+              ? "Ты - живой пользователь мессенджера ArbuzGram по имени ыхыхыххы гимини. Твои ответы должны быть краткими, живыми, с эмодзи."
+              : "You are a lively user of ArbuzGram messenger named ыхыхыххы гимини. Your responses should be short, vivid, and casual with emojis.";
+
+            if (userAvatarData) {
+              const [mime, data] = userAvatarData.split(',');
+              parts.push({ inlineData: { mimeType: mime.match(/:(.*?);/)?.[1] || 'image/png', data } });
+            }
+            if (imageData) {
+              const [mime, data] = imageData.split(',');
+              parts.push({ inlineData: { mimeType: mime.match(/:(.*?);/)?.[1] || 'image/png', data } });
+            }
+            parts.push({ text: userMessage || "Hello" });
+
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${userApiKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: { temperature: 0.9 }
+              })
+            });
+            const json = await response.json();
+            return json.candidates[0].content.parts[0].text;
+          } catch (error) {
+            return lang === 'ru' ? "Ошибка связи с ботом." : "Bot connection error.";
+          }
+        };
+
+        // --- Peer Service ---
+        class PeerService {
+          constructor(customId, onId, onData, onConnect, onDisconnect, onError) {
+            const cleanId = customId.replace(/^@/, '');
+            if (typeof Peer === 'undefined') return;
+            this.peer = new Peer(cleanId);
+            this.connections = new Map();
+            this.peer.on('open', (id) => onId(id));
+            this.peer.on('connection', (conn) => this.setupConnection(conn, onData, onConnect, onDisconnect));
+            this.peer.on('error', (err) => onError(err));
+          }
+          setupConnection(conn, onData, onConnect, onDisconnect) {
+            conn.on('open', () => { this.connections.set(conn.peer, conn); onConnect(conn.peer); });
+            conn.on('data', (data) => onData(conn.peer, data));
+            conn.on('close', () => { this.connections.delete(conn.peer); onDisconnect(conn.peer); });
+          }
+          send(remoteId, data) {
+            const conn = this.connections.get(remoteId.replace(/^@/, ''));
+            if (conn && conn.open) conn.send(data);
+          }
+          broadcast(data) { this.connections.forEach(c => c.open && c.send(data)); }
+          disconnectAll() { this.connections.forEach(c => c.close()); this.peer?.destroy(); }
+        }
+
+        // --- UI Components ---
+        const Avatar = ({ src, className, theme, title }) => {
+          const isSvg = src?.startsWith('<svg') || src?.includes('svg');
+          return (
+            <div title={title} className={`relative overflow-hidden rounded-full flex-shrink-0 bg-white/10 flex items-center justify-center shadow-md transition-all duration-300 hover:scale-105 ${className}`}>
+              {isSvg ? (
+                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: src.startsWith('<svg') ? src : decodeURIComponent(src.split(',')[1] || src) }} />
+              ) : (
+                <img src={src || DEFAULT_AVATAR_URL} className="w-full h-full object-cover" onError={(e) => e.target.src = DEFAULT_AVATAR_URL} />
+              )}
+              {theme === 'frutiger' && <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-white/10 rounded-full border border-white/30 pointer-events-none" />}
+            </div>
+          );
+        };
+        
+        // Helper to handle DiceBear SVGs which might be URLs
+        const AvatarWrapper = (props) => {
+          const [svgContent, setSvgContent] = React.useState(null);
+          React.useEffect(() => {
+            if (props.src?.includes('.svg') && !props.src?.startsWith('<svg')) {
+              fetch(props.src).then(r => r.text()).then(text => {
+                if (text.startsWith('<svg')) setSvgContent(text);
+              }).catch(() => {});
+            }
+          }, [props.src]);
+          return <Avatar {...props} src={svgContent || props.src} />;
+        };
+
+        const AudioPlayer = ({ src, t }) => {
+          const [isPlaying, setIsPlaying] = useState(false);
+          const audioRef = useRef(null);
+          return (
+            <div className="mb-3 flex items-center gap-3 bg-black/20 p-3 rounded-2xl min-w-[200px] border border-white/5">
+              <button onClick={() => { isPlaying ? audioRef.current.pause() : audioRef.current.play(); setIsPlaying(!isPlaying); }} className="w-10 h-10 flex items-center justify-center bg-green-500 rounded-full text-white">
+                <Icon name={isPlaying ? "Pause" : "Play"} size={20} />
+              </button>
+              <span className="text-[10px] opacity-40 font-bold uppercase tracking-widest">{t.voiceMsg}</span>
+              <audio ref={audioRef} src={src} className="hidden" onEnded={() => setIsPlaying(false)} />
+            </div>
+          );
+        };
+
+        const VoiceRecorder = ({ onSend, onCancel }) => {
+          const [duration, setDuration] = useState(0);
+          const [error, setError] = useState(null);
+          const mediaRecorderRef = useRef(null);
+          const chunksRef = useRef([]);
+          const timerRef = useRef(null);
+
+          useEffect(() => {
+            startRecording();
+            return () => { if (timerRef.current) clearInterval(timerRef.current); };
+          }, []);
+
+          const startRecording = async () => {
+            try {
+              const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              const mediaRecorder = new MediaRecorder(stream);
+              mediaRecorderRef.current = mediaRecorder;
+              chunksRef.current = [];
+              mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+              mediaRecorder.onstop = () => {
+                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+                const reader = new FileReader();
+                reader.readAsDataURL(blob);
+                reader.onloadend = () => onSend(reader.result);
+                stream.getTracks().forEach(track => track.stop());
+              };
+              mediaRecorder.start();
+              timerRef.current = setInterval(() => setDuration(d => d + 1), 1000);
+            } catch (err) { setError("Mic error"); }
+          };
+
+          return (
+            <div className="flex items-center gap-3 px-4 py-2 bg-black/40 rounded-full w-full">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-sm font-medium">{Math.floor(duration/60)}:{(duration%60).toString().padStart(2,'0')}</span>
+              </div>
+              <div className="flex-1" />
+              <button onClick={onCancel} className="p-2 text-gray-400 hover:text-white"><Icon name="X" size={20} /></button>
+              <button onClick={() => mediaRecorderRef.current?.stop()} className="p-2 bg-green-500 rounded-full text-white"><Icon name="Send" size={18} /></button>
+            </div>
+          );
+        };
+
+        const App = () => {
+          const [language, setLanguage] = useState('ru');
+          const [userProfile, setUserProfile] = useState(() => {
+            try {
+              const saved = localStorage.getItem('arbuzgram_profile');
+              return saved ? JSON.parse(saved) : { name: 'User', nickname: 'arbuz' + Math.floor(Math.random()*1000), avatar: DEFAULT_AVATAR_URL, theme: 'standard' };
+            } catch(e) { return { name: 'User', nickname: 'arbuz' + Math.floor(Math.random()*1000), avatar: DEFAULT_AVATAR_URL, theme: 'standard' }; }
+          });
+          const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('gemini_user_key') || '');
+          const [chats, setChats] = useState(() => {
+            try {
+              const saved = localStorage.getItem('arbuzgram_chats');
+              return saved ? JSON.parse(saved) : INITIAL_CHATS('ru');
+            } catch(e) { return INITIAL_CHATS('ru'); }
+          });
+          const [activeChatId, setActiveChatId] = useState('saved');
+          const [inputText, setInputText] = useState('');
+          const [searchQuery, setSearchQuery] = useState('');
+          const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+          const [showSettings, setShowSettings] = useState(false);
+          const [isTyping, setIsTyping] = useState(false);
+          const [isRecording, setIsRecording] = useState(false);
+          const peerServiceRef = useRef(null);
+          const fileInputRef = useRef(null);
+          const avatarFileInputRef = useRef(null);
+          const messagesEndRef = useRef(null);
+          const t = TRANSLATIONS[language];
+
+          useEffect(() => {
+            localStorage.setItem('arbuzgram_profile', JSON.stringify(userProfile));
+            peerServiceRef.current?.broadcast({ type: 'profile', profile: userProfile });
+          }, [userProfile]);
+
+          useEffect(() => {
+            localStorage.setItem('arbuzgram_chats', JSON.stringify(chats));
+          }, [chats]);
+
+          useEffect(() => {
+            if (peerServiceRef.current) peerServiceRef.current.disconnectAll();
+            peerServiceRef.current = new PeerService(userProfile.nickname, () => {}, (rid, data) => {
+              if (data.type === 'message') {
+                setChats(prev => prev.map(c => c.id === rid ? { ...c, messages: [...c.messages, data.content] } : c));
+              } else if (data.type === 'profile') {
+                setChats(prev => prev.map(c => c.id === rid ? { ...c, name: data.profile.name, avatar: data.profile.avatar } : c));
+              }
+            }, (rid) => {
+              peerServiceRef.current.send(rid, { type: 'profile', profile: userProfile });
+            }, () => {}, (err) => console.error(err));
+            return () => peerServiceRef.current?.disconnectAll();
+          }, [userProfile.nickname]);
+
+          const themeStyles = useMemo(() => {
+            const themes = {
+              standard: { bg: 'bg-[#0f0f0f]', sidebar: 'bg-[#1c1c1c]', bubbleMe: 'bg-[#766ac8]', bubbleOther: 'bg-[#2b2b2b]', input: 'bg-[#2b2b2b]', button: 'bg-[#766ac8]', accent: 'text-[#766ac8]' },
+              minimal: { bg: 'bg-[#0a0a0a]', sidebar: 'bg-[#121212]', bubbleMe: 'bg-green-600', bubbleOther: 'bg-[#2b2b2b]', input: 'bg-[#1c1c1c]', button: 'bg-green-600', accent: 'text-green-500' },
+              frutiger: { bg: 'bg-gradient-to-br from-[#e0f7fa] to-[#f1f8e9]', sidebar: 'bg-white/40 backdrop-blur-xl', bubbleMe: 'bg-gradient-to-b from-[#4caf50] to-[#2e7d32]', bubbleOther: 'bg-white/90', input: 'bg-white/90', button: 'bg-[#4caf50]', accent: 'text-[#2e7d32]' }
+            };
+            return themes[userProfile.theme] || themes.standard;
+          }, [userProfile.theme]);
+
+          const handleSendMessage = async (text, voiceData, imageData) => {
+            if (!text?.trim() && !voiceData && !imageData) return;
+            const msg = { id: Date.now().toString(), senderId: 'me', text, voiceData, imageData, timestamp: Date.now() };
+            setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, messages: [...c.messages, msg] } : c));
+            setInputText('');
+            if (activeChatId === 'gemini') {
+              setIsTyping(true);
+              const botResponse = await getGeminiResponse(text, language, imageData, userApiKey, userProfile.avatar);
+              setIsTyping(false);
+              const botMsg = { id: (Date.now()+1).toString(), senderId: 'gemini', text: botResponse, timestamp: Date.now() };
+              setChats(prev => prev.map(c => c.id === 'gemini' ? { ...c, messages: [...c.messages, botMsg] } : c));
+            } else if (activeChatId !== 'saved') {
+              peerServiceRef.current?.send(activeChatId, { type: 'message', content: msg });
+            }
+          };
+
+          const activeChat = chats.find(c => c.id === activeChatId) || chats[0];
+          useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [activeChat.messages, isTyping]);
+
+          return (
+            <div className={`flex h-screen w-full overflow-hidden ${themeStyles.bg} text-white transition-all duration-500`}>
+              {/* Sidebar */}
+              <div className={`${isSidebarOpen ? 'w-full md:w-[380px]' : 'w-0'} flex flex-col border-r border-white/10 transition-all duration-300 overflow-hidden ${themeStyles.sidebar}`}>
+                <div className="p-4 flex items-center gap-4 border-b border-white/10 h-[72px] bg-white/5">
+                  <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-white/10 rounded-full"><Icon name="Menu" size={28} /></button>
+                  <h1 className="text-2xl font-black text-green-500 tracking-tight">ArbuzGram</h1>
+                </div>
+                <div className="p-4">
+                  <div className="relative">
+                    <Icon name="Search" size={18} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-40" />
+                    <input 
+                      type="text" 
+                      placeholder={t.search} 
+                      className={`w-full ${themeStyles.input} py-2 pl-10 pr-4 outline-none text-sm rounded-full`} 
+                      value={searchQuery} 
+                      onChange={e => setSearchQuery(e.target.value)} 
+                    />
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto custom-scroll">
+                  {chats.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())).map(chat => (
+                    <div key={chat.id} onClick={() => { setActiveChatId(chat.id); if(window.innerWidth < 768) setIsSidebarOpen(false); }} className={`flex items-center gap-4 p-4 cursor-pointer ${activeChatId === chat.id ? 'bg-white/10 border-r-4 border-green-500' : 'hover:bg-white/5'}`}>
+                      <AvatarWrapper src={chat.avatar} className="w-14 h-14" theme={userProfile.theme} />
+                      <div className="flex-1 truncate">
+                        <h3 className="font-bold truncate">{chat.name}</h3>
+                        <p className="text-xs opacity-50 truncate">{chat.messages[chat.messages.length-1]?.text || 'Start conversation'}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="p-4 border-t border-white/10 flex items-center gap-4 bg-white/5">
+                  <AvatarWrapper src={userProfile.avatar} className="w-12 h-12" theme={userProfile.theme} />
+                  <div className="flex-1 truncate"><p className="font-bold text-sm">{userProfile.name}</p><p className="text-xs text-green-500 font-bold">@{userProfile.nickname}</p></div>
+                  <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-white/10 rounded-full"><Icon name="Settings" size={20} /></button>
+                </div>
+              </div>
+
+              {/* Chat Area */}
+              <div className={`flex-1 flex flex-col relative ${!isSidebarOpen ? 'flex' : 'hidden md:flex'}`}>
+                <div className="h-[72px] border-b border-white/10 flex items-center px-4 gap-4 bg-white/5">
+                  <button className="md:hidden p-2" onClick={() => setIsSidebarOpen(true)}><Icon name="ChevronLeft" size={28} /></button>
+                  <AvatarWrapper src={activeChat.avatar} className="w-12 h-12" theme={userProfile.theme} />
+                  <div className="flex-1">
+                    <h3 className="font-bold">{activeChat.name}</h3>
+                    <p className={`text-xs font-bold uppercase ${themeStyles.accent}`}>{isTyping ? t.typing : t.online}</p>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scroll">
+                  {activeChat.messages.map(msg => (
+                    <div key={msg.id} className={`flex items-end gap-3 ${msg.senderId === 'me' ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <AvatarWrapper src={msg.senderId === 'me' ? userProfile.avatar : activeChat.avatar} className="w-10 h-10" theme={userProfile.theme} />
+                      <div className={`px-4 py-2 max-w-[75%] shadow-lg ${msg.senderId === 'me' ? themeStyles.bubbleMe + ' rounded-2xl rounded-br-none' : themeStyles.bubbleOther + ' rounded-2xl rounded-bl-none'}`}>
+                        {msg.imageData && <img src={msg.imageData} className="max-w-full rounded-lg mb-2 cursor-pointer" onClick={() => window.open(msg.imageData)} />}
+                        {msg.voiceData && <AudioPlayer src={msg.voiceData} t={t} />}
+                        {msg.text && <p className="text-base font-medium">{msg.text}</p>}
+                        <span className="text-[10px] opacity-40 block text-right mt-1">{new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
+                <div className="p-4 border-t border-white/10 bg-white/5 flex gap-3 items-center">
+                  <button onClick={() => fileInputRef.current?.click()} className="p-2 opacity-60 hover:opacity-100"><Icon name="Paperclip" size={24} /></button>
+                  <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) { const r = new FileReader(); r.onload = () => handleSendMessage(undefined, undefined, r.result); r.readAsDataURL(file); } }} accept="image/*" className="hidden" />
+                  
+                  {isRecording ? (
+                    <VoiceRecorder onSend={(data) => { handleSendMessage(undefined, data); setIsRecording(false); }} onCancel={() => setIsRecording(false)} />
+                  ) : (
+                    <input 
+                      type="text" 
+                      className={`flex-1 ${themeStyles.input} py-3 px-6 outline-none rounded-full font-medium`} 
+                      placeholder={t.placeholder} 
+                      value={inputText} 
+                      onChange={e => setInputText(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSendMessage(inputText)}
+                    />
+                  )}
+                  
+                  {!isRecording && (inputText.trim() ? (
+                    <button onClick={() => handleSendMessage(inputText)} className={`w-12 h-12 ${themeStyles.button} rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all`}><Icon name="Send" size={24} /></button>
+                  ) : (
+                    <button onClick={() => setIsRecording(true)} className="p-2 opacity-60 hover:opacity-100"><Icon name="Mic" size={24} /></button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Settings */}
+              {showSettings && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={() => setShowSettings(false)}>
+                  <div className={`${themeStyles.sidebar} w-full max-w-md rounded-[2.5rem] p-8 space-y-8 shadow-2xl`} onClick={e => e.stopPropagation()}>
+                    <div className="flex justify-between items-center"><h2 className="text-2xl font-black">{t.settings}</h2><button onClick={() => setShowSettings(false)}><Icon name="X" size={32} /></button></div>
+                    
+                    <div className="text-center group">
+                      <div className="relative inline-block">
+                        <AvatarWrapper src={userProfile.avatar} className="w-32 h-32 border-4 border-green-500/20 mx-auto" theme={userProfile.theme} />
+                        <div onClick={() => avatarFileInputRef.current?.click()} className="absolute bottom-1 right-1 bg-green-500 p-2 rounded-full cursor-pointer shadow-xl hover:bg-green-600 transition-colors">
+                          <Icon name="Camera" size={18} className="text-white" />
+                        </div>
+                        <input type="file" ref={avatarFileInputRef} onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const r = new FileReader();
+                            r.onload = () => setUserProfile(p => ({ ...p, avatar: r.result }));
+                            r.readAsDataURL(file);
+                          }
+                        }} accept="image/*" className="hidden" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div><label className="text-xs opacity-50 uppercase font-black tracking-widest">{t.yourName}</label><input className={`w-full ${themeStyles.input} p-4 rounded-2xl mt-2 outline-none font-bold`} value={userProfile.name} onChange={e => setUserProfile(p => ({...p, name: e.target.value}))} /></div>
+                      <div><label className="text-xs opacity-50 uppercase font-black tracking-widest">@nickname</label><input className={`w-full ${themeStyles.input} p-4 rounded-2xl mt-2 outline-none font-bold text-green-500`} value={userProfile.nickname} onChange={e => setUserProfile(p => ({...p, nickname: e.target.value.toLowerCase().replace(/\s/g, '')}))} /></div>
+                      <div><label className="text-xs opacity-50 uppercase font-black tracking-widest">Gemini API Key</label><input type="password" className={`w-full ${themeStyles.input} p-4 rounded-2xl mt-2 outline-none`} value={userApiKey} onChange={e => { setUserApiKey(e.target.value); localStorage.setItem('gemini_user_key', e.target.value); }} /></div>
+                      <div><label className="text-xs opacity-50 uppercase font-black tracking-widest">{t.theme}</label><div className="grid grid-cols-1 gap-3 mt-2">
+                        {['standard', 'minimal', 'frutiger'].map(th => (<button key={th} onClick={() => setUserProfile(p => ({...p, theme: th}))} className={`p-4 text-sm font-bold rounded-2xl border-2 transition-all ${userProfile.theme === th ? 'border-green-500 bg-green-500/10' : 'border-white/5'}`}>{t[`theme_${th}`]}</button>))}
+                      </div></div>
+                      <div className="flex gap-4"><button onClick={() => setLanguage('en')} className={`flex-1 p-3 rounded-xl border-2 ${language === 'en' ? 'border-green-500' : 'border-white/5'}`}>EN</button><button onClick={() => setLanguage('ru')} className={`flex-1 p-3 rounded-xl border-2 ${language === 'ru' ? 'border-green-500' : 'border-white/5'}`}>RU</button></div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
